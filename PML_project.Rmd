@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning Project"
+output: html_document
+---
+# Introduction
+
+The goal of this project is to take data collected from motion sensors attached to the (upper) arm, forearm, belt, and dumbbell as a group of participants performed standard bicep curls.
+
+Excerpt from HAR data website:
+
+> Six young health participants were asked to perform one set of 10 repetitions
+ of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+ 
+ + Exactly according to the specification (Class A) 
+ + throwing the elbows to the front (Class B) 
+ + lifting the dumbbell only halfway (Class C)
+ + lowering the dumbbell only halfway (Class D)
+ + throwing the hips to the front (Class E)
+
+The goal of this project is to use a training dataset consisting of sensor readings (predictors) along with assigned bicep curl type from above (outcomes) to predict the class of action that was performed in a test data set consisting of 20 observations with associated curl type classification but without knowing what those classifications were. I was able to correctly predict all twenty of those using the random forest algorithm and was able to repeat these correct predictions using a stochastic gradient boosting algorithm, as well. 
+
+# Cross-validation approach
+
+In order to generate a model that was appropriate to apply to the test data with unknown outcomes, a reasonable estimate of out-of-sample error should be generated. In order to estimate this out-of-sample error, I assume that the test data set would be well-approximated by a random sample of our training data. Thus, I partitioned the training data into a "training-training"" set and a "training-test"" set where the "training-training" set would be used to estimate my model that would then be applied to the "training-test" set to measure the out-of-sample accuracy of said model.
+
+```{r}
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(randomForest)
+setwd("C:/Users/USER/Dropbox/Coursera/Practical Machine Learning/Project")    #DESKTOP
+train <- read.csv("pml-training.csv")
+set.seed(12321)
+inTrain <- createDataPartition(train$classe, p = .5, list=FALSE) # Lower size of training set to make the
+                                                                 # train() call go faster
+train.train <- train[inTrain,]
+train.test <- train[-inTrain,]
+
+```
+
+# Selection of Predictors
+
+The first thing that was done was to clear out variables with lots of NAs or missing values, e.g.:
+
+```{r}
+summary(train$var_yaw_arm)
+```
+
+The following code removes those troublesome predictors:
+
+```{r}
+#Clean out the columns with large numbers of NAs and missing data and useless stuff
+train.clean <- train.train[,-which(is.na(train[1,]))]       #NAs
+train.clean <- train.clean[,-which(train.clean[1,] == "")]  #Blanks
+train.clean <- train.clean[,-c(1:7)]                     #Useless stuff
+```
+
+Next, there were some other predictors that appears particularly unexciting as they didn't offer very much variation between the different bicep classifications. These were all labeled "total_accel_[blank]". 
+
+```{r}
+qplot(total_accel_forearm, data = train, facets = classe~.)
+```
+
+From this figure, we can see that the total_accel_forearm column appears distributed pretty much the same across all different outcome classifications, thus it will have very little predictive power. It's removal will not hurt accuracy but will make our algorithm run faster when it's time to start training our models.
+
+```{r}
+train.clean <- train.clean %>%
+            dplyr::select(c(-total_accel_arm, 
+                            -total_accel_dumbbell, 
+                            -total_accel_forearm, 
+                            -total_accel_belt))
+```
+
+This leaves us with 48 predictors and 1 outcome variable left in the data frame that will be used to train our model, named train.clean:
+
+```{r}
+ncol(train.clean)
+```
+
+# Training the model
+
+The caret package comes loaded with a large selection of different algorithms that can be used in training one's model; after trying out many of them, the approach that offered the best accuracy without taking a huge amount of computation time was the random forest approach. Methods that I tried before this were not able to even generate an in-sample accuracy above 70% but random forests offered accuracy over 99%, which was more than enough to predict the test set, the overall goal of this project. It is worth mentioning that for the random forests methodology, cross-validation is unnecessary for valid estimation of the test set error. I went ahead retained the above partition and double checked just for the sake of completeness; the fact that partitioning makes the calculations complete much more quickly also helps.
+
+```{r}
+predModel<-train(classe~.,data=train.clean,method="rf",
+                trControl=trainControl(method="oob")) #out of bag error estimates, unbiased
+print(predModel)
+```
+
+# Out of sample error rate
+
+If we apply this model to the partitioned data set aside earlier on as train.test, we have an estimate of the out-of-sample accuracy. The following takes the number of times that the model correctly predicts the outcome and divides by the total number of observations:
+
+```{r}
+accuracy <- sum(predict(predModel, train.test)==train.test$classe)/nrow(train.test)
+print(accuracy)
+```
+
+You can see that the accuracy is slightly lower than the in-sample accuracy from above but not much lower (98.8% compared to 99.2%). We deem this to be sufficiently accurate to take to the separate test set to estimate outcomes that are unknown.
+
+# Predicting outcomes on the test set
+
+With an accurate model in hand, now the only thing left to do is apply the model to the 20 test observations from the test set and see what our best guess is.
+
+```{r}
+test <- read.csv("pml-testing.csv")
+test.clean <- test[,-which(is.na(test[1,]))]
+test.clean <- test.clean[,-c(1:7)]
+test.clean <- test.clean %>%
+      dplyr::select(c(-total_accel_arm, 
+                      -total_accel_dumbbell, 
+                      -total_accel_forearm, 
+                      -total_accel_belt))
+
+predictedOutcomes <- predict(predModel, test.clean)
+```
+
+When these were submitted, they were all correct, so it seems as though this approach was successful!
+
+# Appendix
+
+Just for fun, the same thing as above was done using a gradient boosting method instead of random forests:
+
+```{r}
+predModel.v2<-train(classe~.,data=train.clean,method="gbm", verbose = FALSE)
+accuracy.v2 <- sum(predict(predModel.v2, train.test)==train.test$classe)/nrow(train.test)
+print(accuracy.v2)
+```
